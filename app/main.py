@@ -10,11 +10,10 @@ import json
 import time
 from collections import defaultdict
 
-from app.database import get_db, engine
-from app.models import Base, Lead, User, LeadStatus, FailedEmail, EmailStatus
+from app.database import get_db
+from app.models import Lead, User, FailedEmail, EmailStatus
 from app.schemas import Lead as LeadSchema, User as UserSchema, Token, FailedEmail as FailedEmailSchema, LeadStatusUpdate
 from app.auth import (
-    get_current_user,
     get_current_admin_user,
     get_current_attorney_user,
     get_password_hash,
