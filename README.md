@@ -447,6 +447,6 @@ The basic architecture of the application FastAPI as the backend/API layer, Post
 - **Token expiration**: 30-minute default lifetime
 
 ## Other Decisions and Future Improvements
-- **Database Migration** Using alembic allows devs to track their database changes and gives the ability to rollback quickly. This is for future-proofing and at least somewhat mitigating the risk of permanent migration errors.
-- **Email Services** The application is sending mail from the app, rather than using a third-party service, for simplicity and cost. The app currently handles retry logic using exponential backoff. However, in a production setting, this is likely to need either a third-party service for risk of volume, or an asynchronous handler that can send the emails without getting throttled by other services.
-- **File Security Validation** The application handles simple cases like preventing files that are too large or are not of a proper common format for a resume/CV. Possible updates could include checking for malware in the files.
+- **Database Migration**: Using alembic allows devs to track their database changes and gives the ability to rollback quickly. This is for future-proofing and at least somewhat mitigating the risk of permanent migration errors.
+- **Email Services**: The application is sending mail from the app, rather than using a third-party service, for simplicity and cost. The app currently handles retry logic using exponential backoff. However, in a production setting, this is likely to need either a third-party service for risk of volume, or an asynchronous handler that can send the emails without getting throttled by other services.
+- **File Security Validation**: The application handles simple cases like preventing files that are too large or are not of a proper common format for a resume/CV. Possible updates could include checking for and scrubbing malware in the files.
