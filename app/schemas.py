@@ -1,6 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from app.models import LeadStatus, UserRole
 
 class LeadBase(BaseModel):
@@ -8,12 +9,9 @@ class LeadBase(BaseModel):
     last_name: str
     email: EmailStr
 
-class LeadCreate(LeadBase):
-    pass
-
 class Lead(LeadBase):
-    id: int
-    resume_path: str
+    uuid: UUID
+    resume_download_url: str  # Public download URL
     status: LeadStatus
     created_at: datetime
     updated_at: datetime
@@ -23,10 +21,6 @@ class Lead(LeadBase):
 
 class UserBase(BaseModel):
     email: EmailStr
-
-class UserCreate(UserBase):
-    password: str
-    role: UserRole = UserRole.ATTORNEY
 
 class User(UserBase):
     id: int

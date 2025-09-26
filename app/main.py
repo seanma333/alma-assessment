@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ import mimetypes
 
 from app.database import get_db, engine
 from app.models import Base, Lead, User, LeadStatus
-from app.schemas import LeadCreate, Lead as LeadSchema, User as UserSchema, Token
+from app.schemas import Lead as LeadSchema, User as UserSchema, Token
 from app.auth import (
     get_current_user,
     get_current_admin_user,
@@ -29,6 +29,11 @@ load_dotenv()
 # Run 'alembic upgrade head' to apply migrations
 
 app = FastAPI(title="Leads Management API")
+
+def get_download_url(request: Request, lead_uuid: str) -> str:
+    """Generate download URL for a lead's resume"""
+    base_url = str(request.base_url).rstrip('/')
+    return f"{base_url}/leads/{lead_uuid}/resume"
 
 # File validation constants
 ALLOWED_FILE_TYPES = {
@@ -109,6 +114,7 @@ async def create_lead(
     last_name: str,
     email: str,
     resume: UploadFile = File(...),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     # Validate the resume file
@@ -143,30 +149,96 @@ async def create_lead(
         print(f"Email notification failed: {e}")
         pass
 
-    return db_lead
+    # Add download URL to the response
+    lead_data = {
+        "uuid": db_lead.uuid,
+        "first_name": db_lead.first_name,
+        "last_name": db_lead.last_name,
+        "email": db_lead.email,
+        "resume_download_url": get_download_url(request, str(db_lead.uuid)),
+        "status": db_lead.status,
+        "created_at": db_lead.created_at,
+        "updated_at": db_lead.updated_at
+    }
+    return lead_data
 
 @app.get("/leads/", response_model=List[LeadSchema])
 async def get_leads(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_attorney_user)
 ):
     leads = db.query(Lead).all()
-    return leads
 
-@app.put("/leads/{lead_id}/status", response_model=LeadSchema)
-async def update_lead_status(
-    lead_id: int,
+    # Add download URLs to each lead
+    leads_with_download_urls = []
+    for lead in leads:
+        lead_data = {
+            "uuid": lead.uuid,
+            "first_name": lead.first_name,
+            "last_name": lead.last_name,
+            "email": lead.email,
+            "resume_download_url": get_download_url(request, str(lead.uuid)),
+            "status": lead.status,
+            "created_at": lead.created_at,
+            "updated_at": lead.updated_at
+        }
+        leads_with_download_urls.append(lead_data)
+
+    return leads_with_download_urls
+
+@app.get("/leads/{lead_uuid}", response_model=LeadSchema)
+async def get_lead(
+    lead_uuid: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_attorney_user)
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    """Get a single lead by UUID"""
+    lead = db.query(Lead).filter(Lead.uuid == lead_uuid).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Add download URL to the response
+    lead_data = {
+        "uuid": lead.uuid,
+        "first_name": lead.first_name,
+        "last_name": lead.last_name,
+        "email": lead.email,
+        "resume_download_url": get_download_url(request, str(lead.uuid)),
+        "status": lead.status,
+        "created_at": lead.created_at,
+        "updated_at": lead.updated_at
+    }
+    return lead_data
+
+@app.put("/leads/{lead_uuid}/status", response_model=LeadSchema)
+async def update_lead_status(
+    lead_uuid: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_attorney_user)
+):
+    lead = db.query(Lead).filter(Lead.uuid == lead_uuid).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     lead.status = LeadStatus.REACHED_OUT
     db.commit()
     db.refresh(lead)
-    return lead
+
+    # Add download URL to the response
+    lead_data = {
+        "uuid": lead.uuid,
+        "first_name": lead.first_name,
+        "last_name": lead.last_name,
+        "email": lead.email,
+        "resume_download_url": get_download_url(request, str(lead.uuid)),
+        "status": lead.status,
+        "created_at": lead.created_at,
+        "updated_at": lead.updated_at
+    }
+    return lead_data
 
 @app.post("/users/", response_model=UserSchema)
 async def create_user(
@@ -193,9 +265,9 @@ async def create_user(
     db.refresh(db_user)
     return db_user
 
-@app.get("/leads/{lead_id}/resume")
+@app.get("/leads/{lead_uuid}/resume")
 async def download_resume(
-    lead_id: int,
+    lead_uuid: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_attorney_user)
 ):
@@ -203,7 +275,7 @@ async def download_resume(
     Download resume for a specific lead. Requires authentication.
     """
     # Get the lead from database
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    lead = db.query(Lead).filter(Lead.uuid == lead_uuid).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
