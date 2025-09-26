@@ -1,9 +1,7 @@
-import os
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
-import aiofiles
 from datetime import timedelta
 
 from app.database import get_db, engine
@@ -17,6 +15,7 @@ from app.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from app.email import send_lead_notification
+from app.s3_service import s3_service
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,10 +24,6 @@ load_dotenv()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Leads Management API")
-
-# Configure upload directory
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
@@ -57,18 +52,15 @@ async def create_lead(
     resume: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    # Save the resume file
-    file_location = os.path.join(UPLOAD_DIR, f"{email}_{resume.filename}")
-    async with aiofiles.open(file_location, 'wb') as out_file:
-        content = await resume.read()
-        await out_file.write(content)
+    # Upload the resume file to S3
+    s3_url = await s3_service.upload_file(resume)
 
     # Create lead in database
     db_lead = Lead(
         first_name=first_name,
         last_name=last_name,
         email=email,
-        resume_path=file_location
+        resume_path=s3_url
     )
     db.add(db_lead)
     db.commit()
