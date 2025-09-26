@@ -1,8 +1,8 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
-from app.models import LeadStatus, UserRole
+from app.models import LeadStatus, UserRole, EmailStatus
 
 class LeadBase(BaseModel):
     first_name: str
@@ -35,6 +35,26 @@ class User(UserBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class FailedEmailBase(BaseModel):
+    lead_name: str
+    lead_email: str
+    attorney_emails: List[str]
+    error_message: str
+
+class FailedEmail(FailedEmailBase):
+    id: int
+    lead_id: int
+    lead_uuid: UUID
+    status: EmailStatus
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class FailedEmailResend(BaseModel):
+    failed_email_id: int
 
 class TokenData(BaseModel):
     email: Optional[str] = None

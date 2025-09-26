@@ -6,10 +6,13 @@ from typing import List
 from datetime import timedelta
 import io
 import mimetypes
+import json
+import time
+from collections import defaultdict
 
 from app.database import get_db, engine
-from app.models import Base, Lead, User, LeadStatus
-from app.schemas import Lead as LeadSchema, User as UserSchema, Token
+from app.models import Base, Lead, User, LeadStatus, FailedEmail, EmailStatus
+from app.schemas import Lead as LeadSchema, User as UserSchema, Token, FailedEmail as FailedEmailSchema
 from app.auth import (
     get_current_user,
     get_current_admin_user,
@@ -19,7 +22,7 @@ from app.auth import (
     create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from app.email import send_lead_notification
+from app.email import send_lead_notification, send_lead_confirmation
 from app.s3_service import s3_service
 from dotenv import load_dotenv
 
@@ -30,10 +33,54 @@ load_dotenv()
 
 app = FastAPI(title="Leads Management API")
 
+# Rate limiting for lead submissions
+LEAD_SUBMISSION_RATE_LIMIT = 5  # Max 5 submissions per minute per IP
+rate_limit_tracker = defaultdict(list)
+
 def get_download_url(request: Request, lead_uuid: str) -> str:
     """Generate download URL for a lead's resume"""
     base_url = str(request.base_url).rstrip('/')
     return f"{base_url}/leads/{lead_uuid}/resume"
+
+def check_rate_limit(client_ip: str) -> bool:
+    """Check if client has exceeded rate limit"""
+    current_time = time.time()
+    minute_ago = current_time - 60
+
+    # Clean old entries
+    rate_limit_tracker[client_ip] = [
+        timestamp for timestamp in rate_limit_tracker[client_ip]
+        if timestamp > minute_ago
+    ]
+
+    # Check if limit exceeded
+    if len(rate_limit_tracker[client_ip]) >= LEAD_SUBMISSION_RATE_LIMIT:
+        return False
+
+    # Add current request
+    rate_limit_tracker[client_ip].append(current_time)
+    return True
+
+def validate_email_format(email: str) -> None:
+    """Validate email format"""
+    if not email or "@" not in email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format"
+        )
+
+    parts = email.split("@")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format"
+        )
+
+    if "." not in parts[1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format"
+        )
 
 # File validation constants
 ALLOWED_FILE_TYPES = {
@@ -117,6 +164,17 @@ async def create_lead(
     request: Request = None,
     db: Session = Depends(get_db)
 ):
+    # Rate limiting check
+    client_ip = request.client.host if request else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later."
+        )
+
+    # Validate email format
+    validate_email_format(email)
+
     # Validate the resume file
     validate_resume_file(resume)
 
@@ -134,20 +192,43 @@ async def create_lead(
     db.commit()
     db.refresh(db_lead)
 
-    # Send notification emails (optional - will skip if email not configured)
+    # Send notification emails (separate lead and attorney emails)
+    attorney_emails = [user.email for user in db.query(User).filter(User.role == "ATTORNEY").all()]
+
+    # Send email to lead (confirmation)
     try:
-        # Only send emails to attorneys, not admins
-        attorney_emails = [user.email for user in db.query(User).filter(User.role == "ATTORNEY").all()]
-        if attorney_emails:  # Only send if there are attorneys
+        await send_lead_confirmation(
+            lead_email=email,
+            lead_name=f"{first_name} {last_name}"
+        )
+    except Exception as e:
+        # Log lead email failure but don't track in failed_emails (not critical)
+        print(f"Lead confirmation email failed: {e}")
+
+    # Send notification emails to attorneys (critical - track failures)
+    if attorney_emails:  # Only send if there are attorneys
+        try:
             await send_lead_notification(
                 lead_email=email,
                 lead_name=f"{first_name} {last_name}",
                 attorney_emails=attorney_emails
             )
-    except Exception as e:
-        # Log the error but don't fail the lead creation
-        print(f"Email notification failed: {e}")
-        pass
+        except Exception as e:
+            # Log the error and track it in failed_emails table
+            print(f"Attorney notification email failed: {e}")
+
+            # Create failed email record
+            failed_email = FailedEmail(
+                lead_id=db_lead.id,
+                lead_uuid=db_lead.uuid,
+                lead_name=f"{first_name} {last_name}",
+                lead_email=email,
+                attorney_emails=json.dumps(attorney_emails),
+                error_message=str(e),
+                status=EmailStatus.FAILED
+            )
+            db.add(failed_email)
+            db.commit()
 
     # Add download URL to the response
     lead_data = {
@@ -248,6 +329,9 @@ async def create_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)  # Only admins can create users
 ):
+    # Validate email format
+    validate_email_format(email)
+
     # Validate role
     if role not in ["ATTORNEY", "ADMIN"]:
         raise HTTPException(
@@ -298,12 +382,82 @@ async def download_resume(
             detail=f"Failed to download resume: {str(e)}"
         )
 
+# Admin APIs for failed email management
+@app.get("/admin/failed-emails/", response_model=List[FailedEmailSchema])
+async def get_failed_emails(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Get all failed email notifications (Admin only)"""
+    failed_emails = db.query(FailedEmail).filter(FailedEmail.status == EmailStatus.FAILED).all()
+    return failed_emails
+
+@app.post("/admin/failed-emails/{failed_email_id}/resend")
+async def resend_failed_email(
+    failed_email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Resend a failed email notification (Admin only)"""
+    failed_email = db.query(FailedEmail).filter(FailedEmail.id == failed_email_id).first()
+    if not failed_email:
+        raise HTTPException(status_code=404, detail="Failed email record not found")
+
+    if failed_email.status != EmailStatus.FAILED:
+        raise HTTPException(status_code=400, detail="Email is not in failed status")
+
+    try:
+        # Parse attorney emails from JSON
+        attorney_emails = json.loads(failed_email.attorney_emails)
+
+        # Attempt to resend the email
+        await send_lead_notification(
+            lead_email=failed_email.lead_email,
+            lead_name=failed_email.lead_name,
+            attorney_emails=attorney_emails
+        )
+
+        # Update status to SENT and remove from failed_emails table
+        db.delete(failed_email)
+        db.commit()
+
+        return {"message": "Email sent successfully and removed from failed emails"}
+
+    except Exception as e:
+        # Update error message if resend fails
+        failed_email.error_message = f"Resend failed: {str(e)}"
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resend email: {str(e)}"
+        )
+
+@app.delete("/admin/failed-emails/{failed_email_id}")
+async def delete_failed_email(
+    failed_email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Delete a failed email record (Admin only)"""
+    failed_email = db.query(FailedEmail).filter(FailedEmail.id == failed_email_id).first()
+    if not failed_email:
+        raise HTTPException(status_code=404, detail="Failed email record not found")
+
+    db.delete(failed_email)
+    db.commit()
+
+    return {"message": "Failed email record deleted successfully"}
+
 @app.post("/users/initial", response_model=UserSchema)
 async def create_initial_user(
     email: str,
     password: str,
     db: Session = Depends(get_db)
 ):
+    # Validate email format
+    validate_email_format(email)
+
     # Check if any users already exist
     existing_user = db.query(User).first()
     if existing_user:

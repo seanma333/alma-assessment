@@ -24,22 +24,7 @@ async def send_lead_notification(
     lead_name: str,
     attorney_emails: List[EmailStr]
 ):
-    # Email to prospect
-    prospect_message = MessageSchema(
-        subject="Thank you for your application",
-        recipients=[lead_email],
-        body=f"""
-        Dear {lead_name},
-
-        Thank you for submitting your application. Our team will review your information
-        and get back to you shortly.
-
-        Best regards,
-        The Team
-        """,
-        subtype=MessageType.plain
-    )
-
+    """Send notification email to attorneys only"""
     # Email to attorneys
     attorney_message = MessageSchema(
         subject="New Lead Submission",
@@ -55,5 +40,26 @@ async def send_lead_notification(
         subtype=MessageType.plain
     )
 
-    await fastmail.send_message(prospect_message)
     await fastmail.send_message(attorney_message)
+
+async def send_lead_confirmation(
+    lead_email: EmailStr,
+    lead_name: str
+):
+    """Send confirmation email to lead only"""
+    prospect_message = MessageSchema(
+        subject="Thank you for your application",
+        recipients=[lead_email],
+        body=f"""
+        Dear {lead_name},
+
+        Thank you for submitting your application. Our team will review your information
+        and get back to you shortly.
+
+        Best regards,
+        The Team
+        """,
+        subtype=MessageType.plain
+    )
+
+    await fastmail.send_message(prospect_message)
