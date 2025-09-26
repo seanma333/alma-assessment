@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
-from app.models import LeadStatus
+from app.models import LeadStatus, UserRole
 
 class LeadBase(BaseModel):
     first_name: str
@@ -26,9 +26,11 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    role: UserRole = UserRole.ATTORNEY
 
 class User(UserBase):
     id: int
+    role: UserRole
     is_active: bool
     created_at: datetime
     updated_at: datetime

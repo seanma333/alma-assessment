@@ -1,6 +1,6 @@
 import boto3
 import uuid
-from typing import Optional
+from typing import Optional, Tuple
 from fastapi import UploadFile
 from os import getenv
 from dotenv import load_dotenv
@@ -35,6 +35,26 @@ class S3Service:
 
         # Return the S3 URL
         return f"https://{self.bucket_name}.s3.{getenv('AWS_REGION', 'us-east-1')}.amazonaws.com/{unique_filename}"
+
+    def download_file(self, s3_url: str) -> Tuple[bytes, str]:
+        """
+        Download file from S3 and return file content and content type
+        """
+        # Extract the key from the S3 URL
+        # URL format: https://bucket-name.s3.region.amazonaws.com/key
+        key = s3_url.split('/')[-1]
+
+        # Download file from S3
+        response = self.s3_client.get_object(
+            Bucket=self.bucket_name,
+            Key=key
+        )
+
+        # Get file content and content type
+        file_content = response['Body'].read()
+        content_type = response.get('ContentType', 'application/octet-stream')
+
+        return file_content, content_type
 
 # Create a singleton instance
 s3_service = S3Service()

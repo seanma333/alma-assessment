@@ -1,4 +1,4 @@
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from typing import List
 from pydantic import EmailStr
 from os import getenv
@@ -37,6 +37,7 @@ async def send_lead_notification(
         Best regards,
         The Team
         """,
+        subtype=MessageType.plain
     )
 
     # Email to attorneys
@@ -51,6 +52,7 @@ async def send_lead_notification(
 
         Please review the submission in the leads management system.
         """,
+        subtype=MessageType.plain
     )
 
     await fastmail.send_message(prospect_message)

@@ -13,6 +13,10 @@ class UserStatus(str, Enum):
     TRUE = "true"
     FALSE = "false"
 
+class UserRole(str, Enum):
+    ATTORNEY = "ATTORNEY"
+    ADMIN = "ADMIN"
+
 class Lead(Base):
     __tablename__ = "leads"
 
@@ -31,6 +35,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    role = Column(SQLEnum(UserRole, name="user_role"), default=UserRole.ATTORNEY, nullable=False)
     is_active = Column(SQLEnum(UserStatus, name="user_status"), default=UserStatus.TRUE, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
