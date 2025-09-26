@@ -12,7 +12,7 @@ from collections import defaultdict
 
 from app.database import get_db, engine
 from app.models import Base, Lead, User, LeadStatus, FailedEmail, EmailStatus
-from app.schemas import Lead as LeadSchema, User as UserSchema, Token, FailedEmail as FailedEmailSchema
+from app.schemas import Lead as LeadSchema, User as UserSchema, Token, FailedEmail as FailedEmailSchema, LeadStatusUpdate
 from app.auth import (
     get_current_user,
     get_current_admin_user,
@@ -80,6 +80,15 @@ def validate_email_format(email: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid email format"
+        )
+
+def check_email_exists(email: str, db: Session) -> None:
+    """Check if email already exists in database"""
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already exists"
         )
 
 # File validation constants
@@ -296,6 +305,7 @@ async def get_lead(
 @app.put("/leads/{lead_uuid}/status", response_model=LeadSchema)
 async def update_lead_status(
     lead_uuid: str,
+    status_update: LeadStatusUpdate,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_attorney_user)
@@ -304,7 +314,7 @@ async def update_lead_status(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    lead.status = LeadStatus.REACHED_OUT
+    lead.status = status_update.status
     db.commit()
     db.refresh(lead)
 
@@ -331,6 +341,9 @@ async def create_user(
 ):
     # Validate email format
     validate_email_format(email)
+
+    # Check if email already exists
+    check_email_exists(email, db)
 
     # Validate role
     if role not in ["ATTORNEY", "ADMIN"]:
@@ -457,6 +470,9 @@ async def create_initial_user(
 ):
     # Validate email format
     validate_email_format(email)
+
+    # Check if email already exists
+    check_email_exists(email, db)
 
     # Check if any users already exist
     existing_user = db.query(User).first()

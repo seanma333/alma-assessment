@@ -56,5 +56,8 @@ class FailedEmail(FailedEmailBase):
 class FailedEmailResend(BaseModel):
     failed_email_id: int
 
+class LeadStatusUpdate(BaseModel):
+    status: LeadStatus
+
 class TokenData(BaseModel):
     email: Optional[str] = None
